@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Mic, MicOff, RotateCcw, Send, Video, VideoOff } from "lucide-react";
 import type { ChatMessage } from "@/lib/traeClient";
 import { useToast } from "@/hooks/use-toast";
+import { AudioRecorder, transcribeAudio } from "@/utils/audioRecorder";
 
 interface ChatPanelProps {
   persona: string;
@@ -47,11 +48,15 @@ const ChatPanel = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioRecorderRef = useRef<AudioRecorder | null>(null);
   const { toast } = useToast();
+  const [input, setInput] = useState("");
   
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<'granted' | 'denied' | 'pending'>('pending');
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

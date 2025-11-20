@@ -1,1 +1,4 @@
 project_id = "sxamsrzewthpwxsyggym"
+
+[functions.tencent-asr]
+verify_jwt = false
