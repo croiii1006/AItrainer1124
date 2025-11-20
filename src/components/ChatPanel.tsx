@@ -91,6 +91,44 @@ const ChatPanel = ({
       </div>
 
       <CardContent className="flex-1 flex flex-col p-0">
+        {/* 1.5 视频区域（新增） */}
+        {isActive && (
+          <div className="p-4 border-b border-border">
+            <div className="relative w-full h-56 bg-secondary/50 rounded-lg overflow-hidden">
+              {/* 销售摄像头窗口（大）- 70% 宽度 */}
+              <div className="absolute right-0 top-0 w-[70%] h-full bg-black/80 flex flex-col items-center justify-center">
+                <video
+                  id="salesWebcam"
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white/80 bg-black/40 px-3 py-2 rounded backdrop-blur-sm">
+                  <span>摄像头：已开启 | 麦克风：已开启</span>
+                  {/* 预留静音/关闭摄像头按钮占位 */}
+                  <div className="flex gap-2">
+                    <button className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center">
+                      <Mic className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 顾客窗口（小）- 30% 宽度，左上角 */}
+              <div className="absolute left-4 top-4 w-[28%] h-32 bg-muted border-2 border-border rounded-lg overflow-hidden shadow-lg">
+                <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-secondary to-muted">
+                  <div className="text-3xl mb-2">👤</div>
+                  <span className="text-xs text-muted-foreground">AI 顾客场景</span>
+                  <span className="text-xs text-muted-foreground">(占位)</span>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 text-center">
+              当前版本只展示销售实时视频和顾客静态场景，后续将接入 AI 视频 Avatar 与表情/注意力分析。
+            </p>
+          </div>
+        )}
         {/* 2. 中部对话区 */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {!isActive && messages.length === 0 ? (
@@ -158,21 +196,13 @@ const ChatPanel = ({
           )}
         </div>
 
-        {/* 未来增强功能占位 */}
-        {isActive && (
-          <div className="mx-6 mb-4 p-3 bg-secondary/50 border border-border rounded-lg">
-            <p className="text-xs text-muted-foreground">
-              <strong>未来增强功能占位：</strong>这里预留视频预览、波形图、实时情绪曲线等组件容器，暂不实现。
-            </p>
-          </div>
-        )}
 
         {/* 3. 底部控制区 */}
         {isActive && (
           <div className="border-t border-border p-4 space-y-3">
             {/* 辅助说明 */}
             <p className="text-xs text-muted-foreground text-center">
-              当前 MVP 以语音回答为主，后续将增加视频表情分析。
+              说明：当前只做前端演示，实际录制与多模态分析将在接入后端与大模型时实现。
             </p>
             
             {/* 录制状态条 */}

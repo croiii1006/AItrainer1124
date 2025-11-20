@@ -68,7 +68,7 @@ const ResultPanel = ({
           {getSessionStatusBadge()}
         </div>
         <p className="text-xs text-muted-foreground mt-2">
-          开始训练后，这里将展示会话分析结果与评分。
+          开始训练后，这里会显示多维度会话分析结果。
         </p>
       </CardHeader>
 
