@@ -101,15 +101,13 @@ serve(async (req) => {
     
     console.log('Audio data length:', dataLen, 'bytes');
     
-    // 构建请求体 - 使用正确的参数名
+    // 构建请求体 - 只使用文档明确支持的参数
     const payload = JSON.stringify({
-      EngSerViceType: "16k_zh",  // 修正：EngSerViceType 而不是 EngineModelType
-      SourceType: 1,
-      VoiceFormat: "webm",  // 添加：必需参数
-      Data: audio,  // base64 编码的音频数据
-      DataLen: dataLen,  // 添加：必需参数，原始数据长度
-      ChannelNum: 1,
-      ResTextFormat: 0,
+      EngSerViceType: "16k_zh",  // 必需：引擎模型类型
+      SourceType: 1,              // 必需：语音数据来源（1=post body）
+      VoiceFormat: "webm",        // 必需：音频格式
+      Data: audio,                // 必需：base64 编码的音频数据
+      DataLen: dataLen,           // 推荐：原始数据长度
     });
 
     console.log('Request payload:', JSON.stringify({
