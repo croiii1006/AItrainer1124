@@ -1,9 +1,10 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Mic, MicOff, RotateCcw, Send } from "lucide-react";
+import { Mic, MicOff, RotateCcw, Send, Video, VideoOff } from "lucide-react";
 import type { ChatMessage } from "@/lib/traeClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface ChatPanelProps {
   persona: string;
@@ -44,6 +45,13 @@ const ChatPanel = ({
   onSendRoundForAnalysis,
 }: ChatPanelProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const { toast } = useToast();
+  
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState<'granted' | 'denied' | 'pending'>('pending');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -52,6 +60,102 @@ const ChatPanel = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // TODO: 接入后端/大模型 - 请求摄像头与麦克风权限
+  const requestMediaPermissions = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        },
+        audio: true
+      });
+      
+      streamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      
+      setCameraEnabled(stream.getVideoTracks().length > 0 && stream.getVideoTracks()[0].enabled);
+      setMicEnabled(stream.getAudioTracks().length > 0 && stream.getAudioTracks()[0].enabled);
+      setPermissionStatus('granted');
+      
+      toast({
+        title: "摄像头已开启",
+        description: "视频和音频权限已授予",
+      });
+    } catch (error) {
+      console.error('Error accessing media devices:', error);
+      setPermissionStatus('denied');
+      
+      toast({
+        title: "权限被拒绝",
+        description: "无法访问摄像头或麦克风，请检查浏览器权限设置",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // TODO: 接入后端/大模型 - 停止摄像头预览
+  const stopWebcamPreview = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    setCameraEnabled(false);
+    setMicEnabled(false);
+    setPermissionStatus('pending');
+  };
+
+  // 切换摄像头开关
+  const toggleCamera = () => {
+    if (streamRef.current) {
+      const videoTrack = streamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setCameraEnabled(videoTrack.enabled);
+      }
+    }
+  };
+
+  // 切换麦克风开关
+  const toggleMic = () => {
+    if (streamRef.current) {
+      const audioTrack = streamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setMicEnabled(audioTrack.enabled);
+      }
+    }
+  };
+
+  // 当会话开始时请求权限
+  useEffect(() => {
+    if (isActive && permissionStatus === 'pending') {
+      requestMediaPermissions();
+    }
+    
+    return () => {
+      if (!isActive) {
+        stopWebcamPreview();
+      }
+    };
+  }, [isActive]);
+
+  // 组件卸载时停止摄像头
+  useEffect(() => {
+    return () => {
+      stopWebcamPreview();
+    };
+  }, []);
 
   // 会话状态：灰色=未开始，绿色=进行中，蓝色=已结束
   const getSessionStatus = () => {
@@ -97,7 +201,22 @@ const ChatPanel = ({
             <div className="relative w-full h-56 bg-secondary/50 rounded-lg overflow-hidden">
               {/* 销售摄像头窗口（大）- 70% 宽度 */}
               <div className="absolute right-0 top-0 w-[70%] h-full bg-black/80 flex flex-col items-center justify-center">
+                {permissionStatus === 'denied' && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/80 bg-black/60 z-10">
+                    <VideoOff className="h-12 w-12 mb-2" />
+                    <p className="text-sm">摄像头权限未授予</p>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="mt-3 text-white border-white/30"
+                      onClick={requestMediaPermissions}
+                    >
+                      重新请求权限
+                    </Button>
+                  </div>
+                )}
                 <video
+                  ref={videoRef}
                   id="salesWebcam"
                   autoPlay
                   muted
@@ -105,11 +224,23 @@ const ChatPanel = ({
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white/80 bg-black/40 px-3 py-2 rounded backdrop-blur-sm">
-                  <span>摄像头：已开启 | 麦克风：已开启</span>
-                  {/* 预留静音/关闭摄像头按钮占位 */}
+                  <span>
+                    摄像头：{cameraEnabled ? '已开启' : '已关闭'} | 麦克风：{micEnabled ? '已开启' : '已关闭'}
+                  </span>
                   <div className="flex gap-2">
-                    <button className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center">
-                      <Mic className="h-3 w-3" />
+                    <button 
+                      onClick={toggleCamera}
+                      className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+                      title={cameraEnabled ? "关闭摄像头" : "开启摄像头"}
+                    >
+                      {cameraEnabled ? <Video className="h-3 w-3" /> : <VideoOff className="h-3 w-3" />}
+                    </button>
+                    <button 
+                      onClick={toggleMic}
+                      className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+                      title={micEnabled ? "静音" : "取消静音"}
+                    >
+                      {micEnabled ? <Mic className="h-3 w-3" /> : <MicOff className="h-3 w-3" />}
                     </button>
                   </div>
                 </div>
