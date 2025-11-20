@@ -37,6 +37,37 @@ const Index = () => {
   const [personaDetails, setPersonaDetails] = useState<string>("");
   const [dialoguePrompt, setDialoguePrompt] = useState<string>("");
 
+  // MVP 版本：录音和轮次状态
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState("00:00");
+  const [currentRound, setCurrentRound] = useState(1);
+  const totalRounds = 6;
+
+  // TODO: 接入后端/大模型 - 预留录制相关函数
+  const handleStartRecording = () => {
+    setIsRecording(true);
+    // TODO: 实现真实录音逻辑
+    console.log("开始录音");
+  };
+
+  const handleStopRecording = () => {
+    setIsRecording(false);
+    // TODO: 实现停止录音逻辑
+    console.log("停止录音");
+  };
+
+  const handleRedoRecording = () => {
+    setRecordingTime("00:00");
+    // TODO: 实现重新录制逻辑
+    console.log("重新录制");
+  };
+
+  const handleSendRoundForAnalysis = () => {
+    // TODO: 实现发送到后端分析逻辑
+    console.log("发送本轮到后端分析");
+    setCurrentRound((prev) => Math.min(prev + 1, totalRounds));
+  };
+
   const handleStartSession = async () => {
     if (!brand || !persona || !scenario || !difficulty) {
       toast({
@@ -189,6 +220,9 @@ const Index = () => {
     setPersonaDetails("");
     setDialoguePrompt("");
     setIsLoading(false);
+    setIsRecording(false);
+    setRecordingTime("00:00");
+    setCurrentRound(1);
 
     toast({
       title: "已重置",
@@ -224,11 +258,20 @@ const Index = () => {
             <ChatPanel
               persona={persona}
               scenario={scenario}
+              difficulty={difficulty}
               messages={messages}
               isActive={isSessionActive}
               isLoading={isLoading}
+              currentRound={currentRound}
+              totalRounds={totalRounds}
+              isRecording={isRecording}
+              recordingTime={recordingTime}
               onSendMessage={handleSendMessage}
               onEndSession={handleEndSession}
+              onStartRecording={handleStartRecording}
+              onStopRecording={handleStopRecording}
+              onRedoRecording={handleRedoRecording}
+              onSendRoundForAnalysis={handleSendRoundForAnalysis}
             />
           </div>
 
