@@ -82,7 +82,7 @@ export class AudioRecorder {
 export async function transcribeAudio(base64Audio: string): Promise<string> {
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/tencent-asr`,
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/alibaba-asr`,
       {
         method: 'POST',
         headers: {
