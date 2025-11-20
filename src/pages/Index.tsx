@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Header from "@/components/Header";
 import ConfigPanel from "@/components/ConfigPanel";
 import ChatPanel from "@/components/ChatPanel";
 import ResultPanel from "@/components/ResultPanel";
 import { useToast } from "@/hooks/use-toast";
+import { AudioRecorder, transcribeAudio } from "@/utils/audioRecorder";
 import {
   startSessionWithTrae,
   sendMessageToTrae,
@@ -36,11 +37,15 @@ const Index = () => {
   // 保存人设和对话 prompt
   const [personaDetails, setPersonaDetails] = useState<string>("");
   const [dialoguePrompt, setDialoguePrompt] = useState<string>("");
+  
+  // 录音器引用
+  const trainingRecorderRef = useRef<AudioRecorder | null>(null);
 
   // MVP 版本：录音和轮次状态
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState("00:00");
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [currentRound, setCurrentRound] = useState(1);
   const totalRounds = 6;
 
@@ -64,18 +69,74 @@ const Index = () => {
     };
   }, [isRecording, recordingStartTime]);
 
-  // TODO: 接入后端/大模型 - 预留录制相关函数
-  const handleStartRecording = () => {
-    setIsRecording(true);
-    setRecordingStartTime(Date.now());
-    setRecordingTime("00:00");
-    console.log("开始录音");
+  // 录音功能 - 实际录制并识别
+  const handleStartRecording = async () => {
+    try {
+      trainingRecorderRef.current = new AudioRecorder();
+      await trainingRecorderRef.current.start();
+      setIsRecording(true);
+      setRecordingStartTime(Date.now());
+      setRecordingTime("00:00");
+      
+      toast({
+        title: "开始录音",
+        description: "正在录制您的语音...",
+      });
+      
+      console.log("开始录音");
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      toast({
+        title: "录音失败",
+        description: error instanceof Error ? error.message : "无法启动录音",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleStopRecording = () => {
-    setIsRecording(false);
-    setRecordingStartTime(null);
-    console.log("停止录音");
+  const handleStopRecording = async () => {
+    try {
+      if (!trainingRecorderRef.current) return;
+      
+      setIsTranscribing(true);
+      setIsRecording(false);
+      setRecordingStartTime(null);
+      
+      toast({
+        title: "识别中",
+        description: "正在将语音转换为文字...",
+      });
+      
+      const base64Audio = await trainingRecorderRef.current.stop();
+      const text = await transcribeAudio(base64Audio);
+      
+      console.log("停止录音，识别结果:", text);
+      
+      if (text) {
+        // 将识别结果作为用户消息添加到对话
+        await handleSendMessage(text);
+        
+        toast({
+          title: "识别成功",
+          description: `已将您的语音转为文字并发送`,
+        });
+      } else {
+        toast({
+          title: "未识别到语音",
+          description: "请重试",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+      toast({
+        title: "识别失败",
+        description: error instanceof Error ? error.message : "无法识别语音",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTranscribing(false);
+    }
   };
 
   const handleRedoRecording = () => {
