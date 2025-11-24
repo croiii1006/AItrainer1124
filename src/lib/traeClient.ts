@@ -64,27 +64,52 @@ export const DIFFICULTY_MAP: Record<string, string> = {
   "高级": "ADVANCED",
 };
 
+import { realisticCustomerPrompt } from "./prompts/customerRealistic";
+
 // ==================== Kimi API ====================
 
-const KIMI_API_KEY = "sk-Qn3Sq9PvCjH1Gx1qwLGTWhwalF8omd8WYjBkhxxdDo1ehIMF";
-
 async function kimiRequest(messages: any[]) {
-  const response = await fetch("https://api.moonshot.cn/v1/chat/completions", {
+  const response = await fetch("http://localhost:3001/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${KIMI_API_KEY}`,
     },
+    // 👇 关键修改：把 systemPrompt 一起带过去
     body: JSON.stringify({
-      model: "moonshot-v1-128k",
       messages,
-      temperature: 0.8,
+      systemPrompt: realisticCustomerPrompt,
     }),
   });
 
-  const result = await response.json();
-  return result.choices?.[0]?.message?.content ?? "（Kimi 未返回内容）";
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("后端 /chat 调用失败: ", response.status, text);
+    return "";
+  }
+
+  let result: any;
+  try {
+    result = await response.json();
+  } catch (e) {
+    console.error("后端返回的不是合法 JSON: ", e);
+    return "";
+  }
+
+  if (result.error) {
+    console.error("Kimi API 返回错误: ", result.error);
+    return "";
+  }
+
+  const content = result.choices?.[0]?.message?.content?.trim();
+  if (!content) {
+    console.error("Kimi 未返回内容: ", result);
+    return "";
+  }
+
+  return content;
 }
+
+
 
 // -------------------------------
 // 1. 启动 Session（两阶段：先生成人设，再开始对话）
@@ -108,18 +133,35 @@ export async function startSessionWithTrae(config: {
   const personaResponse = await kimiRequest([
     { role: "system", content: personaPrompt },
   ]);
-
+  
+  if (!personaResponse) {
+    // 这里直接抛错，让外层用 toast 提示“启动失败”
+    throw new Error("Kimi 未返回人设，请稍后再试");
+  }
+  
   // 解析人设 JSON
   let personaDetails = personaResponse;
   let openingStatement = "你好，我想看看产品。";
   
   try {
-    const personaJson = JSON.parse(personaResponse);
+    // 先把 ```json ``` 这种代码块包裹去掉
+    let cleaned = personaResponse.trim();
+  
+    if (cleaned.startsWith("```")) {
+      // 去掉开头的 ```json / ``` 之类
+      cleaned = cleaned.replace(/^```[a-zA-Z]*\s*/, "");
+      // 去掉最后结尾的 ```
+      cleaned = cleaned.replace(/```$/, "").trim();
+    }
+  
+    const personaJson = JSON.parse(cleaned);
+  
     openingStatement = personaJson.openingStatement || openingStatement;
     personaDetails = JSON.stringify(personaJson, null, 2);
   } catch (e) {
     console.warn("人设解析失败，使用原始文本", e);
   }
+  
 
   // 第二步：基于人设生成对话系统 prompt
   const dialoguePrompt = buildDialoguePrompt({
@@ -166,6 +208,14 @@ export async function sendMessageToTrae(payload: {
   messages.push({ role: "user", content: payload.userMessage });
 
   const reply = await kimiRequest(messages);
+
+  if (!reply || reply.trim() === "") {
+    console.error("Kimi 没有返回内容，使用兜底顾客回复");
+    return {
+      reply: "抱歉，我这边有点忙，刚刚没有听清楚，您可以再说一遍吗？",
+      state: "NORMAL",
+    };
+  }
 
   // 检测对话状态
   let state = "NORMAL";

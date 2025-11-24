@@ -4,20 +4,21 @@ export class AudioRecorder {
   private stream: MediaStream | null = null;
 
   async start(): Promise<void> {
+    // 每次开始录音前，强制清空旧数据（最重要的一行）
+    this.audioChunks = [];
+
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate: 16000,
         channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true,
-      }
+      },
     });
 
     this.mediaRecorder = new MediaRecorder(this.stream, {
       mimeType: "audio/webm;codecs=opus",
     });
-
-    this.audioChunks = [];
 
     this.mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
@@ -35,14 +36,24 @@ export class AudioRecorder {
         return;
       }
 
+      // 🔥 stop 前先保存局部变量，防止 race condition
+      const chunks = this.audioChunks;
+
       this.mediaRecorder.onstop = async () => {
         try {
-          const audioBlob = new Blob(this.audioChunks, { type: "audio/webm" });
+          const audioBlob = new Blob(chunks, { type: "audio/webm" });
+
+          // 🚨 关键：stop 后清空，避免下一次录音叠加旧数据
+          this.audioChunks = [];
+
           const base64Audio = await this.blobToBase64(audioBlob);
 
           if (this.stream) {
-            this.stream.getTracks().forEach(track => track.stop());
+            this.stream.getTracks().forEach((track) => track.stop());
+            this.stream = null;
           }
+
+          this.mediaRecorder = null;
 
           resolve(base64Audio);
         } catch (error) {
@@ -59,7 +70,6 @@ export class AudioRecorder {
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64 = reader.result as string;
-        // 移除 data:audio/webm;base64, 前缀，只保留纯 base64 数据
         const base64Data = base64.split(",")[1];
         resolve(base64Data);
       };
@@ -75,8 +85,6 @@ export class AudioRecorder {
 
 export async function transcribeAudio(base64Audio: string): Promise<string> {
   try {
-    // base64Audio 此时已经是不带 data: 前缀的纯 base64 字符串，
-    // 如果未来改动了 AudioRecorder 返回值，这里做一次兜底处理：
     const pureBase64 = base64Audio.includes(",")
       ? base64Audio.split(",")[1]
       : base64Audio;
@@ -101,7 +109,6 @@ export async function transcribeAudio(base64Audio: string): Promise<string> {
     }
 
     const data = await response.json();
-    // 后端返回结构为 { "text": "识别结果" }
     return data.text ?? "";
   } catch (error) {
     console.error("Error transcribing audio:", error);
