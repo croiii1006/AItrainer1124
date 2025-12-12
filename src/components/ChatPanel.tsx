@@ -1,12 +1,14 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Mic, MicOff, RotateCcw, Send, Video, VideoOff } from "lucide-react";
 import type { ChatMessage } from "@/lib/traeClient";
 import { useToast } from "@/hooks/use-toast";
-import { AudioRecorder, transcribeAudio } from "@/utils/audioRecorder";
-import { speakText } from "@/utils/tts"; // ✅ 新增：文字转语音工具
+import { AudioRecorder } from "@/utils/audioRecorder";
+import { speakText } from "@/utils/tts";
+import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 
 interface ChatPanelProps {
   persona: string;
@@ -21,7 +23,6 @@ interface ChatPanelProps {
   recordingTime: string;
   onSendMessage: (message: string) => void;
   onEndSession: () => void;
-  // TODO: 接入后端/大模型 - 预留录制相关回调
   onStartRecording?: () => void;
   onStopRecording?: () => void;
   onRedoRecording?: () => void;
@@ -46,12 +47,15 @@ const ChatPanel = ({
   onRedoRecording,
   onSendRoundForAnalysis,
 }: ChatPanelProps) => {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
-  const lastSpokenCustomerIndexRef = useRef<number>(-1); 
-  const { toast } = useToast();
+  const lastSpokenCustomerIndexRef = useRef<number>(-1);
+
   const [input, setInput] = useState("");
 
   const [cameraEnabled, setCameraEnabled] = useState(false);
@@ -62,6 +66,59 @@ const ChatPanel = ({
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
 
+  const isEn = i18n.language?.startsWith("en");
+  const timeLocale = isEn ? "en-US" : "zh-CN";
+  const p = (persona || "").trim();
+  const s = (scenario || "").trim();
+  const d = (difficulty || "").trim();
+
+  // ✅ UI value（中文） -> i18n key 的映射（只影响显示，不影响业务映射表）
+  const personaKeyMap: Record<string, string> = {
+    "高净值顾客": "hnw",
+    "旅游客": "tourist",
+    "犹豫型顾客": "hesitant",
+    "礼物购买者": "gift",
+    "价格敏感型顾客": "priceSensitive",
+  };
+
+  const scenarioKeyMap: Record<string, string> = {
+    "首次进店": "firstVisit",
+    "VIP 回访": "vipReturn",
+    "购买送老板的礼物": "giftForBoss",
+    "机场免税店场景": "dutyFree",
+    "线上咨询": "onlineInquiry",
+  };
+
+  const difficultyKeyMap: Record<string, string> = {
+    "基础": "basic",
+    "中级": "intermediate",
+    "高级": "advanced",
+  };
+  const personaKey = personaKeyMap[p];
+  const scenarioKey = scenarioKeyMap[s];
+  const difficultyKey = difficultyKeyMap[d];
+
+  // ✅ 英文模式：只要 key 存在就强制走英文；不命中就别回退中文，直接 Not selected
+  const personaText = !p
+    ? t("common.notSelected")
+    : personaKey
+      ? t(`config.persona.options.${personaKey}`)
+      : (isEn ? t("common.notSelected") : p);
+
+  const scenarioText = !s
+    ? t("common.notSelected")
+    : scenarioKey
+      ? t(`config.scenario.options.${scenarioKey}`)
+      : (isEn ? t("common.notSelected") : s);
+
+  const difficultyText = !d
+    ? t("common.notSelected")
+    : difficultyKey
+      ? t(`config.difficulty.options.${difficultyKey}`)
+      : (isEn ? t("common.notSelected") : d);
+
+
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -69,31 +126,25 @@ const ChatPanel = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
   // 顾客文字出现时自动播放一次语音
-useEffect(() => {
-  if (!messages || messages.length === 0) return;
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
 
-  // 从后往前找最后一条顾客消息
-  let lastIndex = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "customer") {
-      lastIndex = i;
-      break;
+    let lastIndex = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "customer") {
+        lastIndex = i;
+        break;
+      }
     }
-  }
+    if (lastIndex === -1) return;
+    if (lastIndex <= lastSpokenCustomerIndexRef.current) return;
 
-  if (lastIndex === -1) return;
-
-  // 如果这条顾客消息已经播过，就不重复播
-  if (lastIndex <= lastSpokenCustomerIndexRef.current) return;
-
-  const lastCustomerMsg = messages[lastIndex];
-
-  // 自动播放这条顾客消息
-  speakText(lastCustomerMsg.text);
-  lastSpokenCustomerIndexRef.current = lastIndex;
-}, [messages]);
-
+    const lastCustomerMsg = messages[lastIndex];
+    speakText(lastCustomerMsg.text);
+    lastSpokenCustomerIndexRef.current = lastIndex;
+  }, [messages]);
 
   // 请求摄像头与麦克风权限
   const requestMediaPermissions = async () => {
@@ -114,27 +165,24 @@ useEffect(() => {
       }
 
       setCameraEnabled(
-        stream.getVideoTracks().length > 0 &&
-          stream.getVideoTracks()[0].enabled
+        stream.getVideoTracks().length > 0 && stream.getVideoTracks()[0].enabled,
       );
       setMicEnabled(
-        stream.getAudioTracks().length > 0 &&
-          stream.getAudioTracks()[0].enabled
+        stream.getAudioTracks().length > 0 && stream.getAudioTracks()[0].enabled,
       );
       setPermissionStatus("granted");
 
       toast({
-        title: "摄像头已开启",
-        description: "视频和音频权限已授予",
+        title: t("chat.toast.mediaGranted.title"),
+        description: t("chat.toast.mediaGranted.desc"),
       });
     } catch (error) {
       console.error("Error accessing media devices:", error);
       setPermissionStatus("denied");
 
       toast({
-        title: "权限被拒绝",
-        description:
-          "无法访问摄像头或麦克风，请检查浏览器权限设置",
+        title: t("chat.toast.mediaDenied.title"),
+        description: t("chat.toast.mediaDenied.desc"),
         variant: "destructive",
       });
     }
@@ -185,10 +233,9 @@ useEffect(() => {
     }
 
     return () => {
-      if (!isActive) {
-        stopWebcamPreview();
-      }
+      if (!isActive) stopWebcamPreview();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
   // 组件卸载时停止摄像头
@@ -196,77 +243,70 @@ useEffect(() => {
     return () => {
       stopWebcamPreview();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 会话状态：灰色=未开始，绿色=进行中，蓝色=已结束
   const getSessionStatus = () => {
     if (!isActive && messages.length === 0)
-      return { color: "bg-muted", text: "未开始" };
-    if (isActive) return { color: "bg-green-500", text: "进行中" };
-    return { color: "bg-blue-500", text: "已结束" };
+      return { color: "bg-muted", text: t("chat.sessionStatus.notStarted") };
+    if (isActive) return { color: "bg-green-500", text: t("chat.sessionStatus.active") };
+    return { color: "bg-blue-500", text: t("chat.sessionStatus.ended") };
   };
 
   const sessionStatus = getSessionStatus();
 
   return (
     <Card className="h-full bg-card border-border shadow-card flex flex-col">
-      {/* 1. 顶部状态栏 */}
+      {/* 顶部状态栏 */}
       <div className="border-b border-border px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge
-              variant="outline"
-              className="border-primary/50 text-foreground"
-            >
-              {persona || "未选择"}
+            <Badge variant="outline" className="border-primary/50 text-foreground">
+              {personaText}
             </Badge>
-            <Badge
-              variant="outline"
-              className="border-accent/50 text-foreground"
-            >
-              {scenario || "未选择"}
+            <Badge variant="outline" className="border-accent/50 text-foreground">
+              {scenarioText}
             </Badge>
             <Badge variant="secondary" className="text-foreground">
-              {difficulty || "未选择"}
+              {difficultyText}
             </Badge>
           </div>
+
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground">
-              第 {currentRound} / {totalRounds} 轮
+              {t("chat.round", { current: currentRound, total: totalRounds })}
             </span>
             <div className="flex items-center gap-2">
-              <div
-                className={`w-2 h-2 rounded-full ${sessionStatus.color}`}
-              />
-              <span className="text-xs text-muted-foreground">
-                {sessionStatus.text}
-              </span>
+              <div className={`w-2 h-2 rounded-full ${sessionStatus.color}`} />
+              <span className="text-xs text-muted-foreground">{sessionStatus.text}</span>
             </div>
           </div>
         </div>
       </div>
 
       <CardContent className="flex-1 flex flex-col p-0">
-        {/* 1.5 视频区域（新增） */}
+        {/* 视频区域 */}
         {isActive && (
           <div className="p-4 border-b border-border">
             <div className="relative w-full h-56 bg-secondary/50 rounded-lg overflow-hidden">
-              {/* 销售摄像头窗口（大）- 70% 宽度 */}
+              {/* 销售摄像头窗口（大） */}
               <div className="absolute right-0 top-0 w-[70%] h-full bg-black/80 flex flex-col items-center justify-center">
                 {permissionStatus === "denied" && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-white/80 bg-black/60 z-10">
                     <VideoOff className="h-12 w-12 mb-2" />
-                    <p className="text-sm">摄像头权限未授予</p>
+                    <p className="text-sm">{t("chat.video.permissionDenied")}</p>
                     <Button
                       variant="outline"
                       size="sm"
                       className="mt-3 text-white border-white/30"
                       onClick={requestMediaPermissions}
                     >
-                      重新请求权限
+                      {t("chat.video.requestAgain")}
                     </Button>
                   </div>
                 )}
+
                 <video
                   ref={videoRef}
                   id="salesWebcam"
@@ -275,17 +315,23 @@ useEffect(() => {
                   playsInline
                   className="w-full h-full object-cover"
                 />
+
                 <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white/80 bg-black/40 px-3 py-2 rounded backdrop-blur-sm">
                   <span>
-                    摄像头：
-                    {cameraEnabled ? "已开启" : "已关闭"} | 麦克风：
-                    {micEnabled ? "已开启" : "已关闭"}
+                    {t("chat.video.statusLine", {
+                      camera: cameraEnabled ? t("common.on") : t("common.off"),
+                      mic: micEnabled ? t("common.on") : t("common.off"),
+                    })}
                   </span>
                   <div className="flex gap-2">
                     <button
                       onClick={toggleCamera}
                       className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
-                      title={cameraEnabled ? "关闭摄像头" : "开启摄像头"}
+                      title={
+                        cameraEnabled
+                          ? t("chat.video.turnOffCamera")
+                          : t("chat.video.turnOnCamera")
+                      }
                     >
                       {cameraEnabled ? (
                         <Video className="h-3 w-3" />
@@ -296,47 +342,36 @@ useEffect(() => {
                     <button
                       onClick={toggleMic}
                       className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
-                      title={micEnabled ? "静音" : "取消静音"}
+                      title={micEnabled ? t("chat.video.mute") : t("chat.video.unmute")}
                     >
-                      {micEnabled ? (
-                        <Mic className="h-3 w-3" />
-                      ) : (
-                        <MicOff className="h-3 w-3" />
-                      )}
+                      {micEnabled ? <Mic className="h-3 w-3" /> : <MicOff className="h-3 w-3" />}
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* 顾客窗口（小）- 30% 宽度，左上角 */}
+              {/* 顾客窗口（小） */}
               <div className="absolute left-4 top-4 w-[28%] h-32 bg-muted border-2 border-border rounded-lg overflow-hidden shadow-lg">
                 <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-secondary to-muted">
                   <div className="text-3xl mb-2">👤</div>
-                  <span className="text-xs text-muted-foreground">
-                    AI 顾客场景
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    (占位)
-                  </span>
+                  <span className="text-xs text-muted-foreground">{t("chat.video.customerScene")}</span>
+                  <span className="text-xs text-muted-foreground">{t("chat.video.placeholder")}</span>
                 </div>
               </div>
             </div>
+
             <p className="text-xs text-muted-foreground mt-2 text-center">
-              当前版本只展示销售实时视频和顾客静态场景，后续将接入 AI
-              视频 Avatar 与表情/注意力分析。
+              {t("chat.video.note")}
             </p>
           </div>
         )}
 
-        {/* 2. 中部对话区 */}
+        {/* 对话区 */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {!isActive && messages.length === 0 ? (
             <div className="h-full flex items-center justify-center text-center">
               <div className="space-y-2 max-w-md">
-                <p className="text-muted-foreground text-sm">
-                  请在左侧完成训练配置后，点击『开始训练』以生成 AI
-                  顾客并开启模拟对话。
-                </p>
+                <p className="text-muted-foreground text-sm">{t("chat.emptyHint")}</p>
               </div>
             </div>
           ) : (
@@ -344,11 +379,7 @@ useEffect(() => {
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`flex gap-3 ${
-                    msg.role === "user"
-                      ? "flex-row-reverse"
-                      : "flex-row"
-                  }`}
+                  className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
                 >
                   {/* 头像 */}
                   <div
@@ -362,18 +393,11 @@ useEffect(() => {
                   </div>
 
                   {/* 气泡内容 */}
-                  <div
-                    className={`flex flex-col ${
-                      msg.role === "user"
-                        ? "items-end"
-                        : "items-start"
-                    }`}
-                  >
+                  <div className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
                     <span className="text-xs text-muted-foreground mb-1">
-                      {msg.role === "user"
-                        ? "销售 Sales"
-                        : "AI 顾客 Customer"}
+                      {msg.role === "user" ? t("chat.role.sales") : t("chat.role.customer")}
                     </span>
+
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-3 ${
                         msg.role === "user"
@@ -381,20 +405,15 @@ useEffect(() => {
                           : "bg-secondary text-foreground"
                       }`}
                     >
-                      <p className="text-sm leading-relaxed">
-                        {msg.text}
-                      </p>
+                      <p className="text-sm leading-relaxed">{msg.text}</p>
+
                       <p
                         className={`text-xs mt-1 ${
-                          msg.role === "user"
-                            ? "text-luxury-black/70"
-                            : "text-muted-foreground"
+                          msg.role === "user" ? "text-luxury-black/70" : "text-muted-foreground"
                         }`}
                       >
                         {msg.timestamp
-                          ? new Date(
-                              msg.timestamp
-                            ).toLocaleTimeString("zh-CN", {
+                          ? new Date(msg.timestamp).toLocaleTimeString(timeLocale, {
                               hour: "2-digit",
                               minute: "2-digit",
                             })
@@ -402,7 +421,7 @@ useEffect(() => {
                       </p>
                     </div>
 
-                    {/* ✅ 语音播放按钮：只给顾客消息显示 */}
+                    {/* 语音播放按钮：只给顾客消息显示 */}
                     {msg.role === "customer" && (
                       <button
                         type="button"
@@ -410,7 +429,7 @@ useEffect(() => {
                         className="flex items-center gap-2 mt-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                       >
                         <Mic className="h-3 w-3" />
-                        <span>播放顾客语音</span>
+                        <span>{t("chat.playCustomerVoice")}</span>
                       </button>
                     )}
                   </div>
@@ -421,12 +440,11 @@ useEffect(() => {
           )}
         </div>
 
-        {/* 3. 底部控制区 */}
+        {/* 底部控制区 */}
         {isActive && (
           <div className="border-t border-border p-4 space-y-3">
-            {/* 辅助说明 */}
             <p className="text-xs text-muted-foreground text-center">
-              说明：当前只做前端演示，实际录制与多模态分析将在接入后端与大模型时实现。
+              {t("chat.footer.note")}
             </p>
 
             {/* 录制状态条 */}
@@ -438,12 +456,10 @@ useEffect(() => {
                   <Mic className="h-5 w-5 text-muted-foreground" />
                 )}
                 <span className="text-sm font-medium">
-                  {isRecording ? "录音中…" : "未开始录音"}
+                  {isRecording ? t("chat.recording.inProgress") : t("chat.recording.notStarted")}
                 </span>
               </div>
-              <span className="text-sm font-mono text-muted-foreground">
-                {recordingTime}
-              </span>
+              <span className="text-sm font-mono text-muted-foreground">{recordingTime}</span>
             </div>
 
             {/* 按钮组 */}
@@ -456,8 +472,9 @@ useEffect(() => {
                 className="border-border"
               >
                 <RotateCcw className="mr-2 h-4 w-4" />
-                重新录制
+                {t("chat.actions.redo")}
               </Button>
+
               <Button
                 variant="outline"
                 size="sm"
@@ -466,8 +483,9 @@ useEffect(() => {
                 className="border-border"
               >
                 <Send className="mr-2 h-4 w-4" />
-                发送本轮分析
+                {t("chat.actions.sendRound")}
               </Button>
+
               <Button
                 onClick={isRecording ? onStopRecording : onStartRecording}
                 disabled={isLoading}
@@ -476,12 +494,12 @@ useEffect(() => {
                 {isRecording ? (
                   <>
                     <MicOff className="mr-2 h-4 w-4" />
-                    结束录音
+                    {t("chat.actions.stopRecording")}
                   </>
                 ) : (
                   <>
                     <Mic className="mr-2 h-4 w-4" />
-                    开始录音
+                    {t("chat.actions.startRecording")}
                   </>
                 )}
               </Button>

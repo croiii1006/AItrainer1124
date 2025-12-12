@@ -4,7 +4,6 @@ export class AudioRecorder {
   private stream: MediaStream | null = null;
 
   async start(): Promise<void> {
-    // 每次开始录音前，强制清空旧数据（最重要的一行）
     this.audioChunks = [];
 
     this.stream = await navigator.mediaDevices.getUserMedia({
@@ -21,9 +20,7 @@ export class AudioRecorder {
     });
 
     this.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        this.audioChunks.push(event.data);
-      }
+      if (event.data.size > 0) this.audioChunks.push(event.data);
     };
 
     this.mediaRecorder.start();
@@ -36,14 +33,11 @@ export class AudioRecorder {
         return;
       }
 
-      // 🔥 stop 前先保存局部变量，防止 race condition
       const chunks = this.audioChunks;
 
       this.mediaRecorder.onstop = async () => {
         try {
           const audioBlob = new Blob(chunks, { type: "audio/webm" });
-
-          // 🚨 关键：stop 后清空，避免下一次录音叠加旧数据
           this.audioChunks = [];
 
           const base64Audio = await this.blobToBase64(audioBlob);
@@ -54,7 +48,6 @@ export class AudioRecorder {
           }
 
           this.mediaRecorder = null;
-
           resolve(base64Audio);
         } catch (error) {
           reject(error);
@@ -83,35 +76,29 @@ export class AudioRecorder {
   }
 }
 
-export async function transcribeAudio(base64Audio: string): Promise<string> {
-  try {
-    const pureBase64 = base64Audio.includes(",")
-      ? base64Audio.split(",")[1]
-      : base64Audio;
+// ✅ 改这里：统一打到 Node(3001) 转发，再由 Node 去打 8000
+export async function transcribeAudio(
+  base64Audio: string,
+  language: "en" | "zh" = "zh",
+): Promise<string> {
+  const pureBase64 = base64Audio.includes(",") ? base64Audio.split(",")[1] : base64Audio;
 
-    const response = await fetch("http://127.0.0.1:8000/api/transcribe", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        audioBase64: pureBase64,
-      }),
-    });
+  // 这里用 3001（你的 backend/index.js 端口）
+  const response = await fetch("http://127.0.0.1:3001/api/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audioBase64: pureBase64,
+      language, // en/zh
+    }),
+  });
 
-    if (!response.ok) {
-      console.error(
-        "Whisper API 调用失败",
-        response.status,
-        await response.text()
-      );
-      throw new Error("Whisper API 调用失败");
-    }
-
-    const data = await response.json();
-    return data.text ?? "";
-  } catch (error) {
-    console.error("Error transcribing audio:", error);
-    throw error;
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error("ASR 调用失败", response.status, detail);
+    throw new Error("ASR 调用失败");
   }
+
+  const data = await response.json();
+  return (data?.text ?? "").trim();
 }

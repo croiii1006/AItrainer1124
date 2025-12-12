@@ -16,9 +16,34 @@ import {
   SCENARIO_MAP,
   DIFFICULTY_MAP,
 } from "@/lib/traeClient";
+import i18n from "@/i18n";
+import { useTranslation } from "react-i18next";
+
+function LangToggle() {
+  const isEn = i18n.language?.startsWith("en");
+  return (
+    <button
+      className="px-3 py-1 rounded-md border text-sm hover:bg-muted"
+      onClick={() => {
+        const next = isEn ? "zh" : "en";
+        i18n.changeLanguage(next);
+        localStorage.setItem("lang", next);
+      }}
+    >
+      {isEn ? "中文" : "EN"}
+    </button>
+  );
+}
 
 const Index = () => {
   const { toast } = useToast();
+  const { t } = useTranslation();
+  const appLang: "en" | "zh" = i18n.language?.startsWith("en") ? "en" : "zh";
+
+
+  // ✅ 当前语言（用于 LLM 和 ASR）
+  const asrlang: "zh" | "en" = i18n.language?.startsWith("en") ? "en" : "zh";
+  const isEn = asrlang === "en";
 
   // Configuration state
   const [brand, setBrand] = useState("");
@@ -31,13 +56,17 @@ const Index = () => {
   const [sessionConfig, setSessionConfig] = useState<SessionConfig | null>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const [isLoading, setIsLoading] = useState(false);
   const [evaluationResult, setEvaluationResult] = useState<EvaluationResult | null>(null);
 
   // 保存人设和对话 prompt
   const [personaDetails, setPersonaDetails] = useState<string>("");
   const [dialoguePrompt, setDialoguePrompt] = useState<string>("");
-  
+
   // 录音器引用
   const trainingRecorderRef = useRef<AudioRecorder | null>(null);
 
@@ -52,20 +81,18 @@ const Index = () => {
   // 录音计时器
   useEffect(() => {
     let intervalId: number | undefined;
-    
+
     if (isRecording && recordingStartTime) {
       intervalId = window.setInterval(() => {
         const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
         const minutes = Math.floor(elapsed / 60);
         const seconds = elapsed % 60;
-        setRecordingTime(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+        setRecordingTime(`${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`);
       }, 1000);
     }
-    
+
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+      if (intervalId) clearInterval(intervalId);
     };
   }, [isRecording, recordingStartTime]);
 
@@ -77,18 +104,16 @@ const Index = () => {
       setIsRecording(true);
       setRecordingStartTime(Date.now());
       setRecordingTime("00:00");
-      
+
       toast({
-        title: "开始录音",
-        description: "正在录制您的语音...",
+        title: t("toast.record.start.title"),
+        description: t("toast.record.start.desc"),
       });
-      
-      console.log("开始录音");
     } catch (error) {
-      console.error('Error starting recording:', error);
+      console.error("Error starting recording:", error);
       toast({
-        title: "录音失败",
-        description: error instanceof Error ? error.message : "无法启动录音",
+        title: t("toast.record.startFail.title"),
+        description: error instanceof Error ? error.message : t("toast.record.startFail.desc"),
         variant: "destructive",
       });
     }
@@ -97,41 +122,69 @@ const Index = () => {
   const handleStopRecording = async () => {
     try {
       if (!trainingRecorderRef.current) return;
-      
+
       setIsTranscribing(true);
       setIsRecording(false);
       setRecordingStartTime(null);
-      
+
       toast({
-        title: "识别中",
-        description: "正在将语音转换为文字...",
+        title: t("toast.record.transcribing.title"),
+        description: t("toast.record.transcribing.desc"),
       });
-      
+
       const base64Audio = await trainingRecorderRef.current.stop();
-      const text = await transcribeAudio(base64Audio);
-      
+
+      const isEn = i18n.language?.startsWith("en");
+      const asrLang: "en" | "zh" = isEn ? "en" : "zh";
+
+      const raw = await transcribeAudio(base64Audio, asrLang);
+      const text = (raw ?? "").trim();
+
       console.log("停止录音，识别结果:", text);
-      
-      if (text) {
-        // 将识别结果作为用户消息添加到对话
-        await handleSendMessage(text);
-        
+
+      // 1) 空结果：不发送
+      if (!text) {
         toast({
-          title: "识别成功",
-          description: `已将您的语音转为文字并发送`,
-        });
-      } else {
-        toast({
-          title: "未识别到语音",
-          description: "请重试",
+          title: t("toast.record.empty.title"),
+          description: t("toast.record.empty.desc"),
           variant: "destructive",
         });
+        return;
       }
-    } catch (error) {
-      console.error('Error stopping recording:', error);
+
+      // 2) 英文模式：必须是英文（否则不发）
+      if (isEn) {
+        const hasChinese = /[\u4e00-\u9fff]/.test(text);
+
+        // 允许英文/数字/空格/常见标点（你可按需加）
+        const looksEnglish =
+          /^[A-Za-z0-9\s.,!?'"():;\-/%&]+$/.test(text);
+
+        if (hasChinese || !looksEnglish) {
+          toast({
+            title: t("toast.record.englishOnly.title", { defaultValue: "English only" }),
+            description: t("toast.record.englishOnly.desc", {
+              defaultValue: "Please speak English in English mode.",
+            }),
+            variant: "destructive",
+          });
+          return; // 🚫 不发到对话框
+        }
+      }
+
+      // 3) 发送到对话
+      await handleSendMessage(text);
+
       toast({
-        title: "识别失败",
-        description: error instanceof Error ? error.message : "无法识别语音",
+        title: t("toast.record.success.title"),
+        description: t("toast.record.success.desc"),
+      });
+    } catch (error) {
+      console.error("Error stopping recording:", error);
+      toast({
+        title: t("toast.record.fail.title"),
+        description:
+          error instanceof Error ? error.message : t("toast.record.fail.desc"),
         variant: "destructive",
       });
     } finally {
@@ -139,14 +192,15 @@ const Index = () => {
     }
   };
 
+
+
+
   const handleRedoRecording = () => {
     setRecordingTime("00:00");
-    // TODO: 实现重新录制逻辑
     console.log("重新录制");
   };
 
   const handleSendRoundForAnalysis = () => {
-    // TODO: 实现发送到后端分析逻辑
     console.log("发送本轮到后端分析");
     setCurrentRound((prev) => Math.min(prev + 1, totalRounds));
   };
@@ -154,8 +208,8 @@ const Index = () => {
   const handleStartSession = async () => {
     if (!brand || !persona || !scenario || !difficulty) {
       toast({
-        title: "配置不完整",
-        description: "请先完成所有配置项",
+        title: t("toast.session.configMissing.title"),
+        description: t("toast.session.configMissing.desc"),
         variant: "destructive",
       });
       return;
@@ -168,18 +222,18 @@ const Index = () => {
         persona: PERSONA_MAP[persona],
         scenario: SCENARIO_MAP[scenario],
         difficulty: DIFFICULTY_MAP[difficulty],
+        language:i18n.language?.startsWith("en") ? "en" : "zh",
       });
 
       setSessionId(response.sessionId);
-      // 保存配置，用于后续评分
       setSessionConfig({
         brand: brand || "Gucci",
         personaId: PERSONA_MAP[persona],
         scenarioId: SCENARIO_MAP[scenario],
         difficulty: DIFFICULTY_MAP[difficulty],
+        language: asrlang, // ✅ 保存在 sessionConfig（后续评分/扩展可用）
       });
 
-      // 保存人设和对话 prompt
       setPersonaDetails(response.personaDetails);
       setDialoguePrompt(response.dialoguePrompt);
 
@@ -190,17 +244,19 @@ const Index = () => {
           timestamp: new Date().toISOString(),
         },
       ]);
+
       setIsSessionActive(true);
       setEvaluationResult(null);
 
       toast({
-        title: "训练开始",
-        description: "AI 顾客已准备好，请开始对话",
+        title: t("toast.session.startOk.title"),
+        description: t("toast.session.startOk.desc"),
       });
     } catch (error) {
+      console.error(error);
       toast({
-        title: "启动失败",
-        description: "无法启动训练会话，请稍后重试",
+        title: t("toast.session.startFail.title"),
+        description: t("toast.session.startFail.desc"),
         variant: "destructive",
       });
     } finally {
@@ -211,18 +267,22 @@ const Index = () => {
   const handleSendMessage = async (userMessage: string) => {
     if (!sessionId) return;
 
+    const clean = userMessage?.trim();
+    if (!clean) return;
+
     const userMsg: ChatMessage = {
       role: "user",
-      text: userMessage,
+      text: clean,
       timestamp: new Date().toISOString(),
     };
 
+    // ✅ 先把用户消息加进 UI（一定会显示）
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
 
     try {
-      // 构建对话历史（不包含当前用户消息）
-      const conversationHistory = messages.map((msg) => ({
+      // ✅ 用 ref 获取“最新历史”，再把当前 userMsg 拼进去
+      const historyForRequest = [...messagesRef.current, userMsg].map((msg) => ({
         role: msg.role === "user" ? "user" : "assistant",
         content: msg.text,
       }));
@@ -230,8 +290,9 @@ const Index = () => {
       const response = await sendMessageToTrae({
         sessionId,
         userMessage,
-        dialoguePrompt, // 传入包含人设的对话 prompt
-        conversationHistory, // 传入对话历史
+        dialoguePrompt,
+        conversationHistory: historyForRequest,
+        language:i18n.language?.startsWith("en") ? "en" : "zh",
       });
 
       const customerMsg: ChatMessage = {
@@ -242,25 +303,22 @@ const Index = () => {
 
       setMessages((prev) => [...prev, customerMsg]);
 
-      // 检查对话是否结束
       if (response.state === "PURCHASED" || response.state === "LEFT") {
-        setIsLoading(false);
-        // 自动结束会话并评分
-        setTimeout(() => {
-          handleEndSession();
-        }, 1000);
+        setTimeout(() => handleEndSession(), 1000);
         return;
       }
     } catch (error) {
+      console.error(error);
       toast({
-        title: "发送失败",
-        description: "消息发送失败，请重试",
+        title: t("toast.session.sendFail.title"),
+        description: t("toast.session.sendFail.desc"),
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
 
   const handleEndSession = async () => {
     if (!sessionId || !sessionConfig) return;
@@ -270,19 +328,21 @@ const Index = () => {
       const result = await evaluateSessionWithTrae({
         sessionId,
         messages,
+        language: appLang, // ✅ 可选：让评分也知道语言（你的 traeClient.ts 需要接）
       });
 
       setEvaluationResult(result);
       setIsSessionActive(false);
 
       toast({
-        title: "评分完成",
-        description: `您的综合得分为 ${result.overallScore} 分`,
+        title: t("toast.session.evalOk.title"),
+        description: t("toast.session.evalOk.desc", { score: result.overallScore }),
       });
     } catch (error) {
+      console.error(error);
       toast({
-        title: "评分失败",
-        description: "无法生成评分，请稍后重试",
+        title: t("toast.session.evalFail.title"),
+        description: t("toast.session.evalFail.desc"),
         variant: "destructive",
       });
     } finally {
@@ -308,8 +368,8 @@ const Index = () => {
     setCurrentRound(1);
 
     toast({
-      title: "已重置",
-      description: "所有配置已清空",
+      title: t("toast.session.reset.title"),
+      description: t("toast.session.reset.desc"),
     });
   };
 
@@ -318,8 +378,11 @@ const Index = () => {
       <Header />
 
       <main className="container mx-auto px-6 pt-24 pb-8">
+        <div className="flex justify-end mb-4">
+          <LangToggle />
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
-          {/* Left Panel - Config */}
           <div className="lg:col-span-3">
             <ConfigPanel
               brand={brand}
@@ -336,7 +399,6 @@ const Index = () => {
             />
           </div>
 
-          {/* Center Panel - Chat */}
           <div className="lg:col-span-6">
             <ChatPanel
               persona={persona}
@@ -358,7 +420,6 @@ const Index = () => {
             />
           </div>
 
-          {/* Right Panel - Results */}
           <div className="lg:col-span-3">
             <ResultPanel
               persona={persona}
